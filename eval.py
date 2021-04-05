@@ -13,8 +13,7 @@ from data.data_loader import DataLoader
 from data.image_dataset import ImageDataset
 from training.checkpoint import Checkpoint
 from training.learning_rate import (
-    ConstantLearningRate, PriorityLearningRate, FileMonitorLearningRate
-)
+    ConstantLearningRate, PriorityLearningRate, FileMonitorLearningRate)
 from training.model_saver import ModelSaver
 from training.optimizer_scheduler import OptimizerScheduler
 from concern.config import Configurable, Config
@@ -26,6 +25,7 @@ def main():
     parser.add_argument('--batch_size', type=int,
                         help='Batch size for training')
     parser.add_argument('--resume', type=str, help='Resume from checkpoint')
+    parser.add_argument('--resume2', type=str, help='Resume from checkpoint')
     parser.add_argument('--result_dir', type=str, default='./results/', help='path to save results')
     parser.add_argument('--epochs', type=int, help='Number of training epochs')
     parser.add_argument('--start_iter', type=int,
@@ -92,7 +92,12 @@ class Eval:
             'resume', os.path.join(
                 self.logger.save_dir(model_saver.dir_path),
                 'final'))
+        self.model_path_second = cmd.get(
+            'resume2', os.path.join(
+                self.logger.save_dir(model_saver.dir_path),
+                'final2'))
         self.verbose = verbose
+        self.logger.info("Inside __init__ ")
 
     def init_torch_tensor(self):
         # Use gpu or not
@@ -105,6 +110,7 @@ class Eval:
 
     def init_model(self):
         model = self.structure.builder.build(self.device)
+        self.logger.info("Inside init_model. Model = ")
         return model
 
     def resume(self, model, path):
@@ -133,15 +139,18 @@ class Eval:
         
         return time_cost
         
-    def format_output(self, batch, output):
+    def format_output(self, batch, output, output2):
         batch_boxes, batch_scores = output
+        batch_boxes2, batch_scores = output2
         for index in range(batch['image'].size(0)):
             original_shape = batch['shape'][index]
             filename = batch['filename'][index]
             result_file_name = 'res_' + filename.split('/')[-1].split('.')[0] + '.txt'
             result_file_path = os.path.join(self.args['result_dir'], result_file_name)
             boxes = batch_boxes[index]
+            self.logger.info(boxes)
             scores = batch_scores[index]
+            self.logger.info(scores)
             if self.args['polygon']:
                 with open(result_file_path, 'wt') as res:
                     for i, box in enumerate(boxes):
@@ -163,21 +172,28 @@ class Eval:
         self.init_torch_tensor()
         model = self.init_model()
         self.resume(model, self.model_path)
+        model2 = self.init_model()
+        self.resume(model2, self.model_path_second)
         all_matircs = {}
         model.eval()
+        model2.eval()
         vis_images = dict()
+        self.logger.info("Inside eval")
         with torch.no_grad():
             for _, data_loader in self.data_loaders.items():
                 raw_metrics = []
                 for i, batch in tqdm(enumerate(data_loader), total=len(data_loader)):
                     if self.args['test_speed']:
                         time_cost = self.report_speed(model, batch, times=50)
+                        time_cost2 = self.report_speed(model2, batch, times=50)
                         continue
                     pred = model.forward(batch, training=False)
-                    output = self.structure.representer.represent(batch, pred, is_output_polygon=self.args['polygon']) 
+                    pred2 = model2.forward(batch, training=False)
+                    output = self.structure.representer.represent(batch, pred, is_output_polygon=self.args['polygon'])
+                    output2 = self.structure.representer.represent(batch, pred2, is_output_polygon=self.args['polygon'])
                     if not os.path.isdir(self.args['result_dir']):
                         os.mkdir(self.args['result_dir'])
-                    self.format_output(batch, output)
+                    self.format_output(batch, output, output2)
                     raw_metric = self.structure.measurer.validate_measure(batch, output, is_output_polygon=self.args['polygon'], box_thresh=self.args['box_thresh'])
                     raw_metrics.append(raw_metric)
 
